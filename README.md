@@ -14,9 +14,7 @@ branch of the disassembly if you want compiled rom files to match up with the
 original smkdan roms.
 
 ## Pre-Built
-You can grab the lastest build from the master branch at
-
-https://www.mvs-scans.com/neogeo-diag-bios/19a02-master.zip
+You can grab the lastest build from the master branch [here](https://github.com/m0rb/neogeo-diag-bios/releases/latest/)
 
 ## Building
 Building requires vasm and vlink, which are available here
