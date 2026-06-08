@@ -41,6 +41,16 @@ z80_slot_switch:
 		lea	XY_STR_Z80_SWITCHING_M1, a0
 		RSUB	print_xy_string_struct_clear
 
+	ifd ROM
+		; Running from a cartridge under a foreign host bios, the z80 is
+		; executing the BOARD m1 (the host's own sound driver), not our cart
+		; m1, so it won't answer the #$01 "prepare for slot switch" handshake.
+		; Skip the prep entirely - the REG_CRTFIX bank switch below repoints
+		; the z80's m1 at the cart and the #$3 reset then boots our cart m1
+		; from its _start (clean, with nmi masked).
+		move.b	REG_P1CNT, d3				; save users input for slot select
+	endif
+	ifnd ROM
 		move.b	#$01, REG_SOUND				; tell z80 to prep for m1 switch
 
 		move.l	#$1388, d0				; 12500us / 12.5ms
@@ -54,6 +64,7 @@ z80_slot_switch:
 		bsr	slot_switch_ignored
 
 	.slot_switch_ready:
+	endif
 
 		move.b	d3, d0
 		moveq	#$f, d1
@@ -168,6 +179,11 @@ check_error:
 		bsr	print_error_z80
 		move.w	(a7)+, d0
 
+		cmpi.b	#EC_Z80_SM1_CRC, d0		; show the actual crc on an sm1 crc error
+		bne	.skip_sm1_crc_show
+		bsr	print_sm1_crc_actual
+	.skip_sm1_crc_show:
+
 		tst.b	REG_STATUS_B
 		bpl	.skip_error_to_credit_leds	; skip if aes
 		RSUB	error_to_credit_leds
@@ -210,14 +226,73 @@ check_sm1_test:
 	.check_swap_to_m1:
 		; diag m1 asking us to swap sm1 -> m1
 		cmp.b	#COMM_SM1_TEST_SWITCH_M1, d0
-		bne	.no_swap_back_requested
+		bne	.check_crc_report
 
 		move.b	d0, REG_CRTFIX
 		move.b	#COMM_SM1_TEST_SWITCH_M1_DONE, REG_SOUND
 
 		bsr	z80_wait_clear
+		rts
 
-	.no_swap_back_requested:
+	.check_crc_report:
+		; diag m1 reporting the sm1 crc32 it computed, so we can show it
+		cmp.b	#COMM_SM1_CRC_REPORT, d0
+		bne	.no_sm1_request
+		bsr	read_sm1_crc
+
+	.no_sm1_request:
+		rts
+
+; Reads the 8 sequence-tagged nibbles the z80 sends after COMM_SM1_CRC_REPORT
+; (high nibble = sequence 1..8, low nibble = data) and stores the 4 reassembled
+; crc bytes (upper:lower) at sm1_crc_actual.
+read_sm1_crc:
+		movem.l	d0-d4/a0, -(a7)
+		move.b	#COMM_SM1_CRC_ACK, REG_SOUND	; ready, send it
+		lea	sm1_crc_actual, a0
+		moveq	#$10, d1			; expected high nibble (sequence 1)
+		moveq	#4-1, d2			; 4 bytes
+	.next_byte:
+		bsr	.read_nibble			; high nibble
+		lsl.b	#4, d0
+		move.b	d0, d3
+		bsr	.read_nibble			; low nibble
+		or.b	d0, d3
+		move.b	d3, (a0)+
+		dbra	d2, .next_byte
+		movem.l	(a7)+, d0-d4/a0
+		rts
+
+	.read_nibble:
+		WATCHDOG
+		move.b	REG_SOUND, d0
+		move.b	d0, d4
+		andi.b	#$f0, d4
+		cmp.b	d1, d4				; high nibble == expected sequence?
+		bne	.read_nibble
+		move.b	d0, REG_SOUND			; echo full value back to confirm
+		andi.b	#$0f, d0			; the data nibble
+		addi.b	#$10, d1			; advance to next sequence
+		rts
+
+; print the actual sm1 crc the z80 reported (sm1_crc_actual = upper:lower) on
+; the error screen, so it can be read off and copied into the expected value.
+print_sm1_crc_actual:
+		movem.l	d0-d3/a0/a1, -(a7)
+		lea	XY_STR_SM1_CRC_ACTUAL, a0
+		RSUB	print_xy_string_struct
+		lea	sm1_crc_actual, a1
+		moveq	#18, d0			; x, just after the label
+		moveq	#16, d1			; y
+		moveq	#4-1, d3
+	.loop:
+		move.b	(a1)+, d2
+		movem.l	d0/d1/d3/a1, -(a7)
+		RSUB	print_hex_byte
+		movem.l	(a7)+, d0/d1/d3/a1
+		addq.b	#2, d0
+		dbra	d3, .loop
+		movem.l	(a7)+, d0-d3/a0/a1
 		rts
 
 ; d0 = loop until we stop getting this byte from z80
@@ -380,4 +455,5 @@ XY_STR_Z80_CART_CLEAN:		XY_STRING  4, 22, "CART IS CLEAN AND FUNCTIONAL."
 XY_STR_Z80_M1_ENABLED:		XY_STRING 34,  4, "[M1]"
 XY_STR_Z80_SLOT_SWITCH_NUM:	XY_STRING 29,  4, "[SS ]"
 XY_STR_Z80_SM1_TESTS:		XY_STRING 24,  4, "[SM1]"
+XY_STR_SM1_CRC_ACTUAL:		XY_STRING  4, 16, "SM1 CRC READ:"
 XY_STR_Z80_SND_REG:		XY_STRING  4, 10, "SND REG: "

@@ -1,0 +1,81 @@
+# Builds the diagnostics as a program rom (p1) so it can be run
+# from a cartridge slot / flash cart instead of the BIOS socket.
+#
+#   make -f Makefile.rom
+#
+# Output: output/diag.p1  (a 512k p rom, padded with $ff)
+#
+# Differences from the bios build (Makefile):
+#  - assembled with -DROM (drops the bios mirror/crc self-tests, retargets
+#    the error-address pad, and adds the cartridge boot hook)
+#  - linked at $000000 with rom.ld instead of $c00000 with sp1.ld
+#  - uses rom_header.asm (NEO-GEO header + USER entry) instead of
+#    vector_table.asm, and omits footer.asm (bios crc/mirror bytes)
+#  - byteswapped like the bios: neogeo p roms are stored word-swapped (mame
+#    loads them with ROM_LOAD16_WORD_SWAP, flash carts expect the same), so the
+#    linked image is run through dd conv=swab
+
+OBJS = obj-rom/backup_ram.o \
+       obj-rom/bios_crc32.o \
+       obj-rom/bios_mirror.o \
+       obj-rom/calendar.o \
+       obj-rom/rom_header.o \
+       obj-rom/color_bars_basic.o \
+       obj-rom/color_bars_smpte.o \
+       obj-rom/controller.o \
+       obj-rom/cpu_pal_addr.o \
+       obj-rom/dsub.o \
+       obj-rom/error_address.o \
+       obj-rom/fix_util.o \
+       obj-rom/memory_card.o \
+       obj-rom/memory_common.o \
+       obj-rom/misc_input.o \
+       obj-rom/mmio.o \
+       obj-rom/p_rom_bus.o \
+       obj-rom/palette_ram.o \
+       obj-rom/print_error.o \
+       obj-rom/sp1.o \
+       obj-rom/util.o \
+       obj-rom/video_dac.o \
+       obj-rom/video_ram_2k.o \
+       obj-rom/video_ram_32k.o \
+       obj-rom/watchdog.o \
+       obj-rom/work_ram.o \
+       obj-rom/z80.o
+
+INCS = include/macros.inc \
+       include/neogeo.inc \
+       include/sp1.inc \
+       ../common/error_codes.inc \
+       ../common/comm.inc
+
+VASM = vasmm68k_mot
+VASM_FLAGS = -Fvobj -m68000 -spaces -chklabels -Iinclude -quiet -DROM=1
+VLINK = vlink
+VLINK_FLAGS = -brawbin1 -Trom.ld
+OUTPUT_DIR = output
+OBJ_DIR = obj-rom
+MKDIR = mkdir
+DD = dd
+PROM_SIZE = 524288
+
+$(OUTPUT_DIR)/diag.p1: $(OUTPUT_DIR)/diag.raw
+	# p roms are stored byteswapped (mame loads with word-swap); match that
+	$(DD) if=$(OUTPUT_DIR)/diag.raw of=$(OUTPUT_DIR)/diag.p1 conv=swab
+	# pad up to the declared p rom size with $ff
+	printf '\377%.0s' $$(seq 1 $$(($(PROM_SIZE) - $$(wc -c < $(OUTPUT_DIR)/diag.p1)))) >> $(OUTPUT_DIR)/diag.p1
+
+$(OUTPUT_DIR)/diag.raw: $(OUTPUT_DIR) $(OBJ_DIR) $(OBJS) rom.ld
+	$(VLINK) $(VLINK_FLAGS) -o $(OUTPUT_DIR)/diag.raw $(OBJS)
+
+$(OBJ_DIR)/%.o: %.asm $(INCS)
+	$(VASM) $(VASM_FLAGS) -o $@ $<
+
+$(OUTPUT_DIR):
+	$(MKDIR) $(OUTPUT_DIR)
+
+$(OBJ_DIR):
+	$(MKDIR) $(OBJ_DIR)
+
+clean:
+	rm -f $(OUTPUT_DIR)/diag.raw $(OUTPUT_DIR)/diag.p1 obj-rom/*.o

@@ -39,6 +39,21 @@ loop_d_pressed:
 
 ; loop forever checking for reset request;
 loop_reset_check:
+	ifd ROM
+		; A z80/m1 test runs with the fix layer switched to the cart s1 (a
+		; blank stub on a generic diag cart), so any error text we printed
+		; landed in a tilemap with no font under it - invisible (a black
+		; screen).  Point the fix layer back at the on-board sfix font and undo
+		; any lspc/shadow the slot switch left, so the error is actually
+		; readable.  The text is already in vram; this just makes it show.
+		moveq	#0, d0
+		move.b	d0, REG_SWPROM
+		move.b	d0, REG_BRDFIX
+		move.b	d0, REG_NOSHADOW
+		move.w	#$4000, REG_LSPCMODE
+		move.l	#$7fff0000, PALETTE_RAM_START+$2	; white-on-black text
+		clr.w	PALETTE_BACKDROP
+	endif
 		bsr	print_hold_ss_to_reset
 	.loop_forever:
 		WATCHDOG
@@ -55,9 +70,19 @@ loop_reset_check_dsub:
 
 	.loop_ss_not_pressed:
 		WATCHDOG
+	ifd ROM
+		moveq	#1, d0
+		and.b	REG_STATUS_B, d0		; P1 START
+		bne	.loop_ss_not_pressed
+		moveq	#1, d0
+		and.b	REG_STATUS_A, d0		; P1 COIN
+		bne	.loop_ss_not_pressed		; loop until P1 start+coin both held down
+	endif
+	ifnd ROM
 		moveq	#3, d0
 		and.b	REG_STATUS_B, d0
 		bne	.loop_ss_not_pressed		; loop until P1 start+select both held down
+	endif
 
 		moveq	#4, d0
 		moveq	#27, d1
@@ -66,10 +91,18 @@ loop_reset_check_dsub:
 
 	.loop_ss_pressed:
 		WATCHDOG
+	ifd ROM
+		btst	#0, REG_STATUS_B		; wait for P1 START release
+		beq	.loop_ss_pressed
+		btst	#0, REG_STATUS_A		; and P1 COIN release
+		beq	.loop_ss_pressed
+	endif
+	ifnd ROM
 		moveq	#3, d0
 		and.b	REG_STATUS_B, d0
 		cmp.b	#3, d0
 		bne	.loop_ss_pressed		; loop until P1 start+select are released
+	endif
 
 		reset
 		stop	#$2700
@@ -78,10 +111,22 @@ loop_reset_check_dsub:
 ; they release and reset, else just return
 check_reset_request:
 		move.w	d0, -(a7)
+	ifd ROM
+		; cart build: soft reset on P1 START + COIN (handier on a cab /
+		; flash-cart setup than start+select).  START = REG_STATUS_B bit0,
+		; COIN = REG_STATUS_A bit0; both active low.
+		moveq	#1, d0
+		and.b	REG_STATUS_B, d0		; P1 START
+		bne	.ss_not_pressed
+		moveq	#1, d0
+		and.b	REG_STATUS_A, d0		; P1 COIN
+		bne	.ss_not_pressed
+	endif
+	ifnd ROM
 		moveq	#3, d0
 		and.b	REG_STATUS_B, d0
-
 		bne	.ss_not_pressed			; P1 start+select not pressed, exit out
+	endif
 
 		moveq	#4, d0
 		moveq	#27, d1
@@ -90,10 +135,18 @@ check_reset_request:
 
 	.loop_ss_pressed:
 		WATCHDOG
+	ifd ROM
+		btst	#0, REG_STATUS_B		; wait for P1 START release
+		beq	.loop_ss_pressed
+		btst	#0, REG_STATUS_A		; and P1 COIN release
+		beq	.loop_ss_pressed
+	endif
+	ifnd ROM
 		moveq	#3, d0
 		and.b	REG_STATUS_B, d0
 		cmp.b	#3, d0
 		bne	.loop_ss_pressed		; wait for P1 start+select to be released, before reset
+	endif
 
 		reset
 		stop	#$2700
@@ -345,5 +398,11 @@ print_hold_ss_to_reset:
 		RSUB	print_xy_string_clear
 		rts
 
+	ifd ROM
+STR_HOLD_SS_TO_RESET:			STRING "HOLD START+COIN TO SOFT RESET"
+STR_RELEASE_SS:				STRING "RELEASE START+COIN"
+	endif
+	ifnd ROM
 STR_HOLD_SS_TO_RESET:			STRING "HOLD START/SELECT TO SOFT RESET"
 STR_RELEASE_SS:				STRING "RELEASE START/SELECT"
+	endif

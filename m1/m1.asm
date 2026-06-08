@@ -452,6 +452,12 @@ SM1_TEST_CODE_START:
 	jr	nz, .tests_end
 	RCALL	sm1_crc32_test
 
+	; tell the 68k what crc we actually computed so it can be shown on screen.
+	; preserve the pass/fail result in a across the report.
+	push	af
+	RCALL	report_sm1_crc
+	pop	af
+
 .tests_end:
 	; backup 'a' and have bios switch back to m1
 	ld	b, a
@@ -558,6 +564,27 @@ sm1_crc32_test:
 
 	RCALL	calc_crc32_psub
 
+	; stash the computed crc (de = upper, bc = lower) so we can report it to
+	; the 68k for display.  none of these touch the flags, so the sbc compares
+	; below still see the carry calc_crc32_psub left.
+	ld	hl, Z80_RAM_START + (sm1_crc_buf - SM1_TEST_CODE_START)
+	ld	(hl), d
+	inc	hl
+	ld	(hl), e
+	inc	hl
+	ld	(hl), b
+	inc	hl
+	ld	(hl), c
+
+	ifd	FORCE_SM1_CRC_FAIL
+	; build-time switch: force the crc test to "fail" (after stashing the real
+	; value) so the error screen + reported crc appear even when the crc
+	; actually matches - lets us validate the display against a known-good board.
+	ld	a, EC_Z80_SM1_CRC
+	or	a
+	ret
+	endif
+
 	ld	hl, SM1_CRC32_UPPER
 	sbc	hl, de
 	jr	nz, .test_failed
@@ -599,6 +626,65 @@ sm1_oe_test:
 	ld	a, EC_Z80_SM1_OE
 	or	a
 	ret
+
+; Report the stashed sm1 crc to the 68k as 8 sequence-tagged nibbles (high
+; nibble = sequence 1..8, low nibble = data), so every transferred value is
+; distinct and non-zero - robust over the single-latch handshake regardless of
+; the crc bytes.  RAM-resident: relative jumps only; the buffer is read at its
+; absolute ram address.
+report_sm1_crc:
+	ld	a, COMM_SM1_CRC_REPORT
+	out	($00), a
+	out	($0c), a
+.wait_ack:
+	in	a, ($00)
+	cp	COMM_SM1_CRC_ACK
+	jr	nz, .wait_ack
+
+	ld	hl, Z80_RAM_START + (sm1_crc_buf - SM1_TEST_CODE_START)
+	ld	d, $10			; sequence in the high nibble, starting at 1
+	ld	b, $04			; 4 crc bytes -> 8 nibbles
+.next_byte:
+	ld	c, (hl)			; current crc byte
+	inc	hl
+
+	ld	a, c			; high nibble first
+	rrca
+	rrca
+	rrca
+	rrca
+	and	$0f
+	or	d
+	out	($00), a
+	out	($0c), a
+	ld	e, a			; expected echo back
+.wait_hi:
+	in	a, ($00)
+	cp	e
+	jr	nz, .wait_hi
+	ld	a, d
+	add	a, $10			; next sequence
+	ld	d, a
+
+	ld	a, c			; low nibble
+	and	$0f
+	or	d
+	out	($00), a
+	out	($0c), a
+	ld	e, a
+.wait_lo:
+	in	a, ($00)
+	cp	e
+	jr	nz, .wait_lo
+	ld	a, d
+	add	a, $10
+	ld	d, a
+
+	djnz	.next_byte
+	ret
+
+sm1_crc_buf:
+	ds	4
 
 SM1_TEST_CODE_END:
 
@@ -864,17 +950,32 @@ test_ram_address_psub:
 m68k_comm_test_psub:
 	ld	a, COMM_TEST_HELLO
 	out	($0c), a
-	out	($00), a
+	ifnd ROM
+	out	($00), a		; clear any stale 68k command before polling
+	endif
+	; ROM build: we deliberately do NOT clear the 68k->z80 command latch
+	; here.  Running from a diagnostics cartridge the z80 is reset right as
+	; the 68k enters its comm test, so the 68k can drop the handshake ($5a)
+	; into the latch at the very moment we'd clear it - the clear would wipe
+	; it and the poll below would never see it (NO_HANDSHAKE).  The in ($00)
+	; poll acknowledges the latch itself, so the clear is unnecessary; a
+	; handshake that arrives early simply waits in the latch until the poll
+	; reads it.
 
-	; Wait up to 5 seconds (500 * 10ms) for a response to our hello.
-	; If we were started at boot (AES or MV-1B/C) we need to allow a bit
-	; of time for the main bios to run its tests before it will respond
-	; to us.
+	; Wait up to 20 seconds (2000 * 10ms) for a response to our hello.
+	; If we were started at boot we need to allow time for the main bios
+	; to run its tests before it will respond to us.  When this m1 is run
+	; from a cartridge under a *stock* bios (the diagnostics-cartridge
+	; setup) that path is much longer than under the diag bios: full bios
+	; boot + eyecatcher + the 68k diag boot + its work ram tests all happen
+	; before the 68k reaches the comm test, so the original 5s was not
+	; enough.  We hold hello on the latch the whole time, so a long wait is
+	; harmless - it only delays the error beep if nothing ever answers.
 	; Using bc' for our loop, bc will be used for the delay psub call.
 	; We can't use de/hl because they are used to when setting up the
 	; PSUB delay call.
 	exx
-	ld	bc, 500
+	ld	bc, 2000
 	exx
 
 	jp	.loop_start
@@ -894,6 +995,19 @@ m68k_comm_test_psub:
 	or	b
 	exx
 	jr	nz, .loop_again
+
+	ifd ROM
+	; ROM build: never time out / beep NO_HANDSHAKE here.  Running from a
+	; flash cart this m1 auto-boots and reaches the comm test on its own; if
+	; the user isn't running the z80 test (didn't hold D) the 68k will never
+	; answer, and we must not cry comm-error into the void every ~20s.  Just
+	; reload the counter and keep waiting silently - hello is still latched,
+	; so a real z80 test (which resets us first) handshakes straight through.
+	exx
+	ld	bc, 2000
+	exx
+	jr	.loop_again
+	endif
 
 	or	$ff
 	ld	a, EC_Z80_68K_COMM_NO_HANDSHAKE

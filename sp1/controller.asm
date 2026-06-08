@@ -18,17 +18,35 @@
 		bsr	update_player_data
 		moveq	#$0, d0
 		bsr	send_p1p2_controller
+	ifd ROM
+		moveq	#1, d0
+		and.b	REG_STATUS_B, d0			; P1 START
+		bne	.loop_update
+		moveq	#1, d0
+		and.b	REG_STATUS_A, d0			; P1 COIN
+		bne	.loop_update				; loop until p1 start + coin pressed
+	endif
+	ifnd ROM
 		moveq	#$3, d0
 		and.b	REG_STATUS_B, d0
 		bne	.loop_update				; loop until p1 start + select pressed
+	endif
 
 	.loop_ss_still_pressed:
 		WATCHDOG
+	ifd ROM
+		btst	#0, REG_STATUS_B			; wait for P1 START release
+		beq	.loop_ss_still_pressed
+		btst	#0, REG_STATUS_A			; and P1 COIN release
+		beq	.loop_ss_still_pressed
+	endif
+	ifnd ROM
 		moveq	#$3, d0
 		move.b	REG_STATUS_B, d1
 		and.b	d0, d1
 		cmp.b	d0, d1
 		bne	.loop_ss_still_pressed			; wait for p1 start + select released
+	endif
 		rts
 
 print_labels:
@@ -78,6 +96,13 @@ update_player_data:
 		move.b	p1_input_aux, d1
 		lsl.w	#8, d1
 		or.w	d1, d0			; merge input/input_aux into d0
+		and.w	#$3ff, d0		; keep dir/buttons + start/select only
+		move.b	REG_STATUS_A, d1	; coin switches live here, not in the mux
+		not.b	d1
+		btst	#0, d1			; P1 coin (active low)
+		beq	.p1_no_coin
+		or.w	#$400, d0		; show it as the COIN bit (bit 10)
+	.p1_no_coin:
 		move.b	d3, d1
 		moveq	#$4, d2
 		movem.w	d3/d6, -(a7)
@@ -89,6 +114,13 @@ update_player_data:
 		move.b	p2_input_aux, d1
 		lsl.w	#8, d1
 		or.w	d1, d0
+		and.w	#$3ff, d0
+		move.b	REG_STATUS_A, d1
+		not.b	d1
+		btst	#1, d1			; P2 coin
+		beq	.p2_no_coin
+		or.w	#$400, d0
+	.p2_no_coin:
 		move.b	d3, d1
 		moveq	#$11, d2
 		movem.w	d3/d6, -(a7)
@@ -111,7 +143,7 @@ print_player_data:
 
 		add.b	d1, d5
 		move.b	d2, d6
-		moveq	#$9, d3
+		moveq	#$a, d3				; 11 bits now (added COIN at bit 10)
 
 	.loop_next_bit:
 		move.b	d5, d0
@@ -124,15 +156,8 @@ print_player_data:
 
 		move.b	d5, d0
 		move.b	d6, d1
-		move.w	(a7), d2
-		RSUB	print_hex_byte
-
-		move.b	d5, d0
-		move.b	d6, d1
-		addq.b	#1, d1
 		move.w	(a7)+, d2
-		and.w	#$ff, d2
-		RSUB	print_3_digits
+		RSUB	print_hex_byte
 		rts
 
 STR_CONTROLLER_TESTS:		STRING "CONTROLLER TESTS"
@@ -151,7 +176,7 @@ ROW_LABELS:
 	dc.b "D", $0
 	dc.b "STA", $0
 	dc.b "SEL", $0
+	dc.b "COIN", $0
 	dc.b "HEX", $0
-	dc.b "DEC", $0
 	dc.b $0
 

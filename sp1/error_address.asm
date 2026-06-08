@@ -1,5 +1,6 @@
 	include "neogeo.inc"
 	include "macros.inc"
+	include "sp1.inc"
 
 	global error_address_dsub
 
@@ -14,10 +15,11 @@ error_address_dsub:
 		move.b	d6, d0
 
 		; convert the error code into a error_address
-		; then jump to it.  jump address is $c06000 | (d0 << 5)
+		; then jump to it.  jump address is ERROR_ADDRESS_BASE | (d0 << 5)
+		; ($c06000 for the bios build, $007000 for the cartridge build)
 		and.l	#$ff, d0
 		lsl.l	#5, d0
-		or.l	#$c06000, d0
+		or.l	#ERROR_ADDRESS_BASE, d0
 		move.l	d0, a1
 		lea	REG_WATCHDOG, a0
 		jmp	(a1)

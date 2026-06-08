@@ -5,6 +5,17 @@ BIOS_CRC32_ADDR			equ $c07ffc
 PALETTE_RAM_BACKUP_LOCATION	equ $100024
 FIXMAP_BACKUP_LOCATION		equ $102024
 
+; base address of the error address landing pad.  This lives at the same
+; relative offset within the rom for both builds, but the rom itself is
+; located at $c00000 as a bios and at $000000 as a cartridge p rom.  These
+; values must match the ERR org in the corresponding linker script.
+	ifd ROM
+ERROR_ADDRESS_BASE		equ $007000
+	endif
+	ifnd ROM
+ERROR_ADDRESS_BASE		equ $c06000
+	endif
+
 ; Dynamic subroutines
 DSUB_INIT_PSEUDO		equ $0c
 DSUB_INIT_REAL			equ $18
@@ -26,6 +37,7 @@ main_menu_cursor		equ $100018	; highlighted main menu item
 z80_test_flags			equ $10001a
 memcard_size			equ $10001c	; long, data size
 memcard_flags			equ $100022
+sm1_crc_actual			equ $100024	; long, computed sm1 crc the z80 reports
 
 ; bits we can set/check in z80_test_flags
 Z80_TEST_FLAG_ENABLED		equ $0

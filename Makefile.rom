@@ -1,0 +1,59 @@
+# Diagnostics ROM - A lightly modified, reverse engineered NEO DIAGNOSTICS BIOS
+# Originally by SMKDAN, ACK, and reversed by jwestfall69
+
+# Produces a ready-to-flash romset under dist/ for running the diagnostics from
+# a flash cart instead of the BIOS socket.
+#
+#   make -f Makefile.rom          # build the romset -> dist/
+#   make -f Makefile.rom neo      # also build a Terraonion .neo (needs neosd)
+#   make -f Makefile.rom clean
+#
+# The romset is the bare minimum a flash cart needs: PROM, MROM, and 
+# zero-filled S/V/C roms
+
+DIST    ?= dist
+ROMNAME ?= NGDIAG
+NEOSD   ?= neosd		# only needed for the optional 'neo' target
+
+.PHONY: cart neo clean
+
+rom:
+	$(MAKE) -C sp1 -f Makefile.rom
+	$(MAKE) -C m1 rom
+	mkdir -p $(DIST)
+	cp sp1/output/diag.p1    $(DIST)/$(ROMNAME).p1
+	cp m1/output/m1_rom.bin $(DIST)/$(ROMNAME).m1
+	for t in s1 v1 c1; do head -c 1024 /dev/zero > $(DIST)/$(ROMNAME).$$t; done
+	@echo "=== romset ready: $(DIST)/ ==="
+	@ls -l $(DIST)
+
+# Validation romset: forces an SM1 CRC failure
+validate:
+	$(MAKE) -C sp1 -f Makefile.rom
+	$(MAKE) -C m1 rom-validate
+	mkdir -p $(DIST)
+	cp sp1/output/diag.p1             $(DIST)/$(ROMNAME).p1
+	cp m1/output/m1_rom_validate.bin $(DIST)/$(ROMNAME).m1
+	for t in s1 v1 c1; do head -c 1024 /dev/zero > $(DIST)/$(ROMNAME).$$t; done
+	@echo "=== VALIDATION romset (forced SM1 CRC fail) ready: $(DIST)/ ==="
+	@ls -l $(DIST)
+
+# Optional: pack the romset into a Terraonion .neo (NeoSD/SSDS3).  Needs the
+# neosd CLI on PATH (https://github.com/city41/neosd or terraonion's tool).
+# neosd's generic reader keys off mame-style names, so we stage temp copies.
+neo: cart
+	@tmp=`mktemp -d`; \
+	cp $(DIST)/$(ROMNAME).p1 $$tmp/ngdiag-p1.p1; \
+	cp $(DIST)/$(ROMNAME).m1 $$tmp/ngdiag-m1.m1; \
+	cp $(DIST)/$(ROMNAME).s1 $$tmp/ngdiag-s1.s1; \
+	cp $(DIST)/$(ROMNAME).v1 $$tmp/ngdiag-v1.v1; \
+	cp $(DIST)/$(ROMNAME).c1 $$tmp/ngdiag-c1.c1; \
+	cp $(DIST)/$(ROMNAME).c1 $$tmp/ngdiag-c2.c2; \
+	(cd $$tmp && zip -q ngdiag.zip *); \
+	$(NEOSD) convert -d $(DIST) --name "NEO DIAGNOSTICS" --manufacturer "SMKDAN/ACK" --year 2025 $$tmp/ngdiag.zip; \
+	rm -rf $$tmp; \
+	echo "=== .neo ready: $(DIST)/ngdiag.neo ==="
+
+clean:
+	rm -rf $(DIST)
+	rm -f sp1/output/diag.p1 sp1/output/diag.raw m1/output/m1_rom.bin

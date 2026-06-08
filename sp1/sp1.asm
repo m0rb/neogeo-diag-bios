@@ -22,6 +22,22 @@
 ; start
 _start:
 		WATCHDOG
+	ifd ROM
+		; When running from a cartridge slot (instead of the bios socket)
+		; the host bios has been running up to this point.  Make sure the
+		; cartridge vector table is mapped and that the fix layer reads
+		; from the on-board sfix font, which is what all of our text
+		; printing assumes (tile index == ascii code).  Also undo any
+		; screen darkening the bios may have left enabled, otherwise our
+		; output is invisible (black screen).
+		move.b	d0, REG_SWPROM
+		move.b	d0, REG_BRDFIX
+		move.b	d0, REG_NOSHADOW
+		bset.b	#7, $0010fd80			; BIOS_SYSTEM_MODE: the diag is now
+							; running, so our cart_vblank/cart_timer
+							; wrappers use the diag's handlers, not
+							; the host bios' ones
+	endif
 		clr.b	REG_POUTPUT
 		clr.b	p1_input
 		clr.b	p1_input_edge
@@ -37,6 +53,27 @@ _start:
 		clr.w	PALETTE_BACKDROP
 
 		SSA3	fix_clear
+
+	ifd ROM
+		; Latch the D and C buttons now, right after takeover, into unused
+		; palette entries.  The diag only samples them much later (after the
+		; work ram tests, which clobber any work-ram variable), so without
+		; this the user has to hold them through the whole boot+test sequence.
+		; Unused palette entries survive the ram tests and have no visual
+		; effect.  D = run z80 tests; C (with D) = skip the SM1 OE/CRC checks.
+		moveq	#0, d0
+		btst	#7, REG_P1CNT			; D held? (active low)
+		bne	.cart_d_not_held
+		moveq	#1, d0
+	.cart_d_not_held:
+		move.w	d0, PALETTE_RAM_START+$1000	; D-held latch
+		moveq	#0, d0
+		btst	#6, REG_P1CNT			; C held? (active low)
+		bne	.cart_c_not_held
+		moveq	#1, d0
+	.cart_c_not_held:
+		move.w	d0, PALETTE_RAM_START+$1002	; C-held latch
+	endif
 
 		moveq	#-$10, d0
 		and.b	REG_P1CNT, d0			; check for A+B+C+D being pressed, if not automatic_tests
@@ -58,10 +95,23 @@ automatic_tests:
 
 		clr.b	z80_test_flags
 
-		; auto-detect m1 by checking for the HELLO message (ie diag m1 + AES or MV-1B/C)
 		move.b	#COMM_TEST_HELLO, d1
+	ifnd ROM
+		; bios: auto-detect a talking diag m1 by reading HELLO back from the
+		; sound reply latch
 		cmp.b	REG_SOUND, d1
 		beq	.z80_test_enabled
+	endif
+
+	ifd ROM
+		; cart: the HELLO auto-detect is unreliable here - with the board audio
+		; bank selected the sound reply latch reads back as HELLO even though
+		; our cart m1 is NOT running yet (it only runs once the slot switch
+		; loads it).  So gate z80 testing purely on the user holding D; the
+		; slot switch below is forced to actually load and run the cart m1.
+		tst.w	PALETTE_RAM_START+$1000		; D latched held at takeover?
+		bne	.z80_test_enabled
+	endif
 
 		btst	#7, REG_P1CNT			; if P1 "D" was pressed at boot
 		beq	.z80_test_enabled
@@ -74,8 +124,13 @@ automatic_tests:
 
 		bset.b	#Z80_TEST_FLAG_ENABLED, z80_test_flags
 
+	ifnd ROM
 		cmp.b	REG_SOUND, d1
 		beq	.skip_slot_switch		; skip slot switch if auto-detected m1
+	endif
+		; cart: never skip the slot switch when z80 testing is enabled - it is
+		; the only thing that loads and runs our cart m1 (the board sound bank
+		; is what reads back as "auto-detected", not our m1)
 
 		tst.b	REG_STATUS_B
 		bpl	.skip_slot_switch		; skip slot switch if AES
@@ -83,9 +138,15 @@ automatic_tests:
 		btst	#5, REG_P1CNT
 		beq	.skip_slot_switch		; skip slot switch if P1 "B" is pressed
 
+	ifd ROM
+		tst.w	PALETTE_RAM_START+$1002		; C latched held at takeover?
+		bne	.skip_sm1_tests
+	endif
+
 		btst	#6, REG_P1CNT			; if P1 "C", add flag to bypass SM1 OE/CRC tests
 		bne	.do_slot_switch
 
+	.skip_sm1_tests:
 		bset.b	#Z80_TEST_FLAG_SKIP_SM1_TESTS, z80_test_flags
 
 	.do_slot_switch:
@@ -99,6 +160,19 @@ automatic_tests:
 		bsr	auto_z80_tests
 
 	.skip_z80_test:
+
+	ifd ROM
+		; The z80 slot-switch path repoints the fix layer at the cart s1 and
+		; can disturb the lspc/shadow, so the results (and the menu) draw
+		; into a fix layer that isn't being shown - exactly what a hard
+		; reset fixes.  Re-run our display init here so they render.
+		move.b	d0, REG_SWPROM
+		move.b	d0, REG_BRDFIX
+		move.b	d0, REG_NOSHADOW
+		move.w	#$4000, REG_LSPCMODE
+		move.l	#$7fff0000, PALETTE_RAM_START+$2	; white-on-black text
+		clr.w	PALETTE_BACKDROP
+	endif
 
 		bsr	automatic_function_tests
 		lea	XY_STR_ALL_TESTS_PASSED, a0
@@ -177,8 +251,12 @@ automatic_psub_tests_dsub:
 
 
 AUTOMATIC_PSUB_TEST_STRUCT_START:
+	ifnd ROM
+	; these two only make sense when we are the bios at $c00000.  As a
+	; cartridge they would test the host's bios, so leave them out.
 	dc.l	auto_bios_mirror_test_dsub, STR_TESTING_BIOS_MIRROR
 	dc.l	auto_bios_crc32_test_dsub, STR_TESTING_BIOS_CRC32
+	endif
 	dc.l	auto_work_ram_oe_tests_dsub, STR_TESTING_WORK_RAM_OE
 	dc.l	auto_work_ram_we_tests_dsub, STR_TESTING_WORK_RAM_WE
 	dc.l	auto_work_ram_data_tests_dsub, STR_TESTING_WORK_RAM_DATA
@@ -426,7 +504,12 @@ timer_interrupt:
 		rte
 
 
-STR_VERSION_HEADER:		STRING "NEO DIAGNOSTICS v0.19a02 - SMKDAN/ACK"
+	ifd ROM
+STR_VERSION_HEADER:		STRING "ROM DIAGNOSTICS v0.19a10 - SMKDAN/ACK"
+	endif
+	ifnd ROM
+STR_VERSION_HEADER:		STRING "NEO DIAGNOSTICS v0.19a10 - SMKDAN/ACK"
+	endif
 
 XY_STR_A_TO_RESUME:		XY_STRING  4, 26, "A: Release to Resume"
 XY_STR_D_MAIN_MENU:		XY_STRING  4, 27, "D: Return to menu"
