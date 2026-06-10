@@ -418,6 +418,13 @@ sm1_tests:
 	jp	Z80_RAM_START
 
 SM1_TEST_CODE_START:
+	; snapshot our own $0000 before the switch; if the post-switch read matches,
+	; there's no sm1 (we're reading ourselves)
+	ld	hl, $0000
+	ld	de, Z80_RAM_START + (m1_self_sig - SM1_TEST_CODE_START)
+	ld	bc, SM1_SIG_LEN
+	ldir
+
 	; request bios switch to sm1 rom
 	ld	a, COMM_SM1_TEST_SWITCH_SM1
 	out	($00), a
@@ -448,14 +455,45 @@ SM1_TEST_CODE_START:
 	out	($00), a
 	out	($0c), a
 
+	; capture sm1 $0000 now (survives an OE-test failure)
+	ld	hl, $0000
+	ld	de, Z80_RAM_START + (sm1_sig_buf - SM1_TEST_CODE_START)
+	ld	bc, SM1_SIG_LEN
+	ldir
+
+	; pre == post -> no sm1, report NONE instead of a false crc error
+	ld	hl, Z80_RAM_START + (m1_self_sig - SM1_TEST_CODE_START)
+	ld	de, Z80_RAM_START + (sm1_sig_buf - SM1_TEST_CODE_START)
+	ld	b, SM1_SIG_LEN
+.cmp_self_sig:
+	ld	a, (de)
+	cp	(hl)
+	jr	nz, .sm1_present
+	inc	hl
+	inc	de
+	djnz	.cmp_self_sig
+
+	; no sm1 - tell the 68k and pass
+	RCALL	report_sm1_none
+	xor	a
+	jr	.tests_end
+
+.sm1_present:
 	RCALL	sm1_oe_test
-	jr	nz, .tests_end
+	jr	nz, .tests_end_report
 	RCALL	sm1_crc32_test
 
 	; tell the 68k what crc we actually computed so it can be shown on screen.
 	; preserve the pass/fail result in a across the report.
 	push	af
 	RCALL	report_sm1_crc
+	pop	af
+
+.tests_end_report:
+	; report the raw sig on both paths (oe-fail and crc), preserving the
+	; pass/fail code in a
+	push	af
+	RCALL	report_sm1_sig
 	pop	af
 
 .tests_end:
@@ -627,11 +665,7 @@ sm1_oe_test:
 	or	a
 	ret
 
-; Report the stashed sm1 crc to the 68k as 8 sequence-tagged nibbles (high
-; nibble = sequence 1..8, low nibble = data), so every transferred value is
-; distinct and non-zero - robust over the single-latch handshake regardless of
-; the crc bytes.  RAM-resident: relative jumps only; the buffer is read at its
-; absolute ram address.
+; report sm1 crc as 8 seq-tagged nibbles (RAM-resident: rel jumps only)
 report_sm1_crc:
 	ld	a, COMM_SM1_CRC_REPORT
 	out	($00), a
@@ -683,8 +717,83 @@ report_sm1_crc:
 	djnz	.next_byte
 	ret
 
+; report raw sm1 sig bytes (seq wraps $10..$f0; RAM-resident)
+report_sm1_sig:
+	ld	a, COMM_SM1_SIG_REPORT
+	out	($00), a
+	out	($0c), a
+.wait_ack:
+	in	a, ($00)
+	cp	COMM_SM1_SIG_ACK
+	jr	nz, .wait_ack
+
+	ld	hl, Z80_RAM_START + (sm1_sig_buf - SM1_TEST_CODE_START)
+	ld	d, $10			; sequence in the high nibble, starting at 1
+	ld	b, SM1_SIG_LEN
+.next_byte:
+	ld	c, (hl)			; current raw byte
+	inc	hl
+
+	ld	a, c			; high nibble first
+	rrca
+	rrca
+	rrca
+	rrca
+	and	$0f
+	or	d
+	out	($00), a
+	out	($0c), a
+	ld	e, a			; expected echo back
+.wait_hi:
+	in	a, ($00)
+	cp	e
+	jr	nz, .wait_hi
+	ld	a, d			; next sequence, wrapping past $f0 to $10
+	add	a, $10
+	jr	nz, .hi_seq_ok
+	ld	a, $10
+.hi_seq_ok:
+	ld	d, a
+
+	ld	a, c			; low nibble
+	and	$0f
+	or	d
+	out	($00), a
+	out	($0c), a
+	ld	e, a
+.wait_lo:
+	in	a, ($00)
+	cp	e
+	jr	nz, .wait_lo
+	ld	a, d
+	add	a, $10
+	jr	nz, .lo_seq_ok
+	ld	a, $10
+.lo_seq_ok:
+	ld	d, a
+
+	djnz	.next_byte
+	ret
+
+; tell the 68k there's no sm1 (one-byte handshake; RAM-resident)
+report_sm1_none:
+	ld	a, COMM_SM1_NONE
+	out	($00), a
+	out	($0c), a
+.wait_ack:
+	in	a, ($00)
+	cp	COMM_SM1_NONE_ACK
+	jr	nz, .wait_ack
+	ret
+
 sm1_crc_buf:
 	ds	4
+
+sm1_sig_buf:
+	ds	SM1_SIG_LEN
+
+m1_self_sig:
+	ds	SM1_SIG_LEN
 
 SM1_TEST_CODE_END:
 

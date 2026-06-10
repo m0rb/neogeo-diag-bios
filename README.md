@@ -61,12 +61,40 @@ z80 testing is opt-in via the buttons held at boot:
 | hold at boot | result |
 |---|---|
 | (nothing) | z80 testing skipped (clean boot) |
-| **D**     | full z80 test including the SM1 OE/CRC test |
-| **C+D**   | z80 test, SM1 OE/CRC skipped |
-| **B+D**   | z80 test, SM1 OE/CRC skipped (for MV-1B/1C and other boards without an SM1) |
+| **D**     | full z80 test; the SM1 OE/CRC test runs unless the board is detected as having no SM1 |
+| **C+D**   | z80 test, SM1 OE/CRC force-skipped |
+| **B+D**   | z80 test, SM1 OE/CRC force-skipped (skips the slot switch; for MV-1B/1C) |
+| **A+D**   | z80 test, SM1 OE/CRC **forced** even if the board is detected as having no SM1 |
+
+**No false SM1 errors on no-SM1 boards.** There are two layers:
+
+1. **Boot-time auto-skip (host-bios detection):** the cart inspects the host
+   bios at boot and skips the SM1 test on boards it can identify as having no
+   SM1 (AES, **unibios in AES mode**, and stock MV-1B/MV-1C). You'll see
+   `SM1 AUTO-SKIPPED`; press **B** on the results screen to retest live, or hold
+   **A+D** at boot to force it.
+2. **In-test detection (bios-independent):** if a no-SM1 board *isn't* caught at
+   boot (e.g. MV-1B/MV-1C running under unibios in MVS mode), the m1 catches it
+   during the test — it snapshots its own bytes before the bank switch and, if
+   the post-switch read is byte-for-byte identical (the switch had no SM1 to map,
+   so it's reading itself), it reports **`SM1: NONE`** and passes instead of
+   throwing a CRC error. This works under any bios on any board, so **a no-SM1
+   board never produces a false SM1 error.**
 
 If/When the SM1 CRC test fails, the actual computed CRC is shown on the error screen
 so it can be checked against the expected value. (Please report an issue with screenshot)
+
+The new **BIOS INFO** menu item reports the host bios in detail: header HW
+(AES/MVS), region, runtime mode, Universe Bios detection, the bios CRC32 and the
+identified bios/board name, plus whether the SM1 test will run on this board.
+
+The **RETURN TO FLASHCART MENU** item lets you drop straight back to your flash
+cart's loader from the diag. Flash carts implement their in-game return combo by
+patching a normal game's vblank handler to forward the controller state to an
+on-cart register; the diag hijacks the bios so it never gets patched, so instead
+it performs that same forward itself. Currently wired for **PlatNeo / BackBit**
+(hold your configured return combo, or hold **A** to force it); the writes are
+harmless on other carts. See [docs/rom.md](docs/rom.md) for the mechanism.
 
 ### Notes
 

@@ -81,18 +81,89 @@ error after ~20s of idling.
 The SM1 OE/CRC test reads the board's SM1 rom, so its result depends on whether
 the board actually has one:
 
-* **Boards with an SM1** &mdash; the test reads the rom. (MV-1F/2F/4F/6F...)
-  
-  * **Boards without an SM1** &mdash; MV-1B, MV-1C, and AES have no SM1 rom, so
-  the test reads a fixed wrong region and throws an error. (Error Code 001100) 
-  On these boards, use **B+D** or **C+D** to skip the SM1 test.
+* **Boards with an SM1** &mdash; the test reads the rom and crc-checks it.
+  (MV-1F/2F/4F/6F, MV-1, MV-1A...)
+* **Boards without an SM1** &mdash; MV-1B, MV-1C and AES have no SM1 rom.  The
+  diag detects this (see *In-test SM1 detection* below) and reports
+  **`SM1: NONE`** as a pass &mdash; it no longer throws a false CRC error, and you
+  no longer need **B+D**/**C+D** to dodge one (those still work as manual skips).
 
-When the SM1 CRC test fails, the actual computed CRC is shown on the error screen
-(`SM1 CRC READ: xxxxxxxx`) so you can see what your particular board hashes to
-and compare it against the expected value in [m1.inc](../m1/m1.inc)
+When the SM1 test *fails on a board that does have an SM1* (a genuine fault), the
+error screen shows the actual computed CRC (`SM1 CRC READ: xxxxxxxx`) **and the
+first 8 raw bytes the z80 read** (`SM1 RAW: xx xx ...`), so you can
+compare the CRC against the expected value in [m1.inc](../m1/m1.inc)
 (`SM1_CRC32_UPPER`/`SM1_CRC32_LOWER`).  The `make -f Makefile.rom validate` build
 forces this path even when the CRC matches, for confirming the readout against a
 known-good board.
+
+### Board detection &amp; SM1 auto-skip
+
+To avoid that false error without making the user remember a button combo, the
+cart inspects the host bios at boot (the same approach as the 240p Test Suite)
+and auto-skips the SM1 test on boards with no SM1.  The signals, in order:
+
+* **Runtime mode latch** &mdash; `$10fd82` (the bios AES/MVS work-ram flag) is
+  latched at takeover, before the work-ram tests wipe it, into an unused palette
+  entry.  `$00` = AES.  This is what unibios sets for its AES/MVS *mode*, so it
+  catches **unibios running in AES mode** even though the hardware id still reads
+  MVS.
+* **Bios header byte** &mdash; `$c00400` (`$00` AES / `$80` MVS) on a *stock*
+  bios.  Skipped for unibios, whose header byte is not a reliable indicator.
+* **Bios CRC32** &mdash; crc of the 128KiB host bios at `$c00000`, matched
+  against a table of known bios ids.  The MV-1B/MV-1C board bios'es are flagged
+  as no-SM1.  (Plain crc32 in 68k memory order, so the values line up with the
+  240p Test Suite's table.)
+
+When SM1 is auto-skipped you get `SM1 AUTO-SKIPPED` on the z80 screen and the
+results screen.  Overrides:
+
+* **A+D at boot** &mdash; force the SM1 test even on a detected no-SM1 board.
+* **B on the results screen** &mdash; live-retest SM1 (re-runs the slot switch +
+  z80 tests, no reboot) for a suspected false positive.
+
+The host-bios detection can't see through unibios (the crc reads as unibios, not
+the board), so an MV-1B/1C running under unibios in MVS mode won't be caught at
+boot.  That case is handled by a second, bios-independent layer:
+
+### In-test SM1 detection (the real catch-all)
+
+On a board with **no SM1**, flipping `REG_BRDFIX` to "board audio" has nothing to
+map, so the z80 just keeps reading the **cart m1** (confirmed on an MV-1C: the
+SM1 read came back byte-for-byte identical to the m1's own first bytes,
+`C3 66 01 FF FF...`, and its "crc" tracked changes to the m1).
+
+So the m1 detects it directly: it **snapshots its own first bytes at `$0000`
+before the bank switch**, reads them again after, and if they're identical the
+board has no SM1.  It then reports `COMM_SM1_NONE` and the diag shows
+**`SM1: NONE`** and passes, instead of running the crc and throwing a false
+error.  This needs no bios knowledge and no crc table, so **no no-SM1 board
+(any revision, any bios, including unibios-MVS) produces a false SM1 error** -
+the boot-time host-bios skip is now just an optimisation that avoids the round
+trip on boards it can identify up front.
+
+### BIOS INFO menu item
+
+A **BIOS INFO** entry on the main menu reports the host bios in full: header HW
+(AES/MVS), region, latched runtime mode, Universe Bios detection (`$c000b0`),
+the bios CRC32, the identified bios/board name, and whether the SM1 test will run
+on this board.  Useful for confirming what the auto-skip detected, and for
+identifying an unknown bios (the CRC is shown even when the name lookup misses).
+
+### RETURN TO FLASHCART MENU
+
+Flash carts give you an in-game "return to loader" button combo by **patching a
+normal game's vblank handler** to forward the controller state to an on-cart
+register each frame; the cart's MCU does the combo match and reloads its menu.
+The diag hijacks the bios and runs its own vblank.
+
+The BackBit Platinum Cart's loader return hook hides in unused exception-vector slots, repoints the vblank vector at itself, and performs a
+`move.w (BIOS_P1CURRENT ^ $6b17), $2bacb0` 
+
+* **press return combo** &mdash; the diag forwards the raw button
+  state, so whatever combo the cart is set to just works
+
+Darksoft/NeoSD's return to loader hook most likely uses uses a similar method;
+***To Be Continued.**
 
 ## Other differences from the bios build
 
@@ -105,7 +176,3 @@ known-good board.
 * This is **not** a substitute for the bios build when diagnosing a dead board.
   To even reach the cartridge, the host bios, work ram and the cartridge bus all
   have to be working.  If those are suspect, use the real bios build.
-
-Everything else &mdash; color bars, video dac, controller, work/backup/palette/
-video ram loops, calendar, memory card, misc input, and the automatic ram tests
-&mdash; works the same as the bios build.

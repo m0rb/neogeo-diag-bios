@@ -38,11 +38,24 @@ z80_test_flags			equ $10001a
 memcard_size			equ $10001c	; long, data size
 memcard_flags			equ $100022
 sm1_crc_actual			equ $100024	; long, computed sm1 crc the z80 reports
+sm1_sig_actual			equ $100028	; SM1_SIG_LEN raw sm1 bytes the z80 reports
 
 ; bits we can set/check in z80_test_flags
 Z80_TEST_FLAG_ENABLED		equ $0
 Z80_TEST_FLAG_SLOT_SWITCH	equ $1
 Z80_TEST_FLAG_SKIP_SM1_TESTS	equ $2
+Z80_TEST_FLAG_SM1_AUTO_SKIPPED	equ $3	; sm1 skip from board detection (not B/C)
+Z80_TEST_FLAG_SM1_NONE		equ $4	; m1 probe found no sm1 (benign)
+Z80_TEST_FLAG_SM1_PRESENT	equ $5	; m1 probe found a real sm1
+
+; bios inspection (rom build) - bios is always at $c00000
+HOST_BIOS_BASE			equ $c00000
+HOST_BIOS_SIZE			equ $20000	; 128KiB
+HOST_BIOS_HW_BYTE		equ $c00400	; $00 AES / $80 MVS
+HOST_BIOS_REGION_BYTE		equ $c00401	; $00 JP / $01 US / $02 EU
+HOST_BIOS_UNIBIOS_SIG		equ $c000b0	; word == $4e55 on unibios
+HOST_BIOS_RUNTIME_FLAG		equ $0010fd82	; $00 AES / $80 MVS (unibios mode); latch early
+RUNTIME_AES_LATCH		equ PALETTE_RAM_START+$1004	; latched runtime AES flag (1/0)
 
 ; bits for p1/2_input_edge
 UP				equ $0

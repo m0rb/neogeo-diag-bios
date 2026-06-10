@@ -19,6 +19,14 @@ auto_z80_tests:
 		lea	XY_STR_Z80_SND_REG, a0
 		RSUB	print_xy_string_struct_clear
 
+	ifd ROM
+		btst	#Z80_TEST_FLAG_SM1_AUTO_SKIPPED, z80_test_flags
+		beq	.no_autoskip_note
+		lea	XY_STR_Z80_SM1_AUTOSKIP, a0
+		RSUB	print_xy_string_struct_clear
+	.no_autoskip_note:
+	endif
+
 		bsr	start_comm_test
 
 	.loop_try_again:
@@ -42,7 +50,7 @@ z80_slot_switch:
 		RSUB	print_xy_string_struct_clear
 
 	ifd ROM
-		; Running from a cartridge under a foreign host bios, the z80 is
+		; Running from a cartridge under a foreign bios, the z80 is
 		; executing the BOARD m1 (the host's own sound driver), not our cart
 		; m1, so it won't answer the #$01 "prepare for slot switch" handshake.
 		; Skip the prep entirely - the REG_CRTFIX bank switch below repoints
@@ -180,8 +188,14 @@ check_error:
 		move.w	(a7)+, d0
 
 		cmpi.b	#EC_Z80_SM1_CRC, d0		; show the actual crc on an sm1 crc error
-		bne	.skip_sm1_crc_show
+		bne	.check_sm1_oe_show
 		bsr	print_sm1_crc_actual
+		bsr	print_sm1_sig_actual		; + the raw sm1 read (no-sm1 pattern)
+		bra	.skip_sm1_crc_show
+	.check_sm1_oe_show:
+		cmpi.b	#EC_Z80_SM1_OE, d0		; on an sm1 oe error the crc wasn't
+		bne	.skip_sm1_crc_show		; computed, but the raw read still helps
+		bsr	print_sm1_sig_actual
 	.skip_sm1_crc_show:
 
 		tst.b	REG_STATUS_B
@@ -235,17 +249,30 @@ check_sm1_test:
 		rts
 
 	.check_crc_report:
-		; diag m1 reporting the sm1 crc32 it computed, so we can show it
+		; m1 reports sm1 crc - means a real sm1 is present
 		cmp.b	#COMM_SM1_CRC_REPORT, d0
-		bne	.no_sm1_request
+		bne	.check_sig_report
+		bset.b	#Z80_TEST_FLAG_SM1_PRESENT, z80_test_flags
 		bsr	read_sm1_crc
+		rts
+
+	.check_sig_report:
+		; diag m1 reporting the first raw bytes it read from the sm1 region
+		cmp.b	#COMM_SM1_SIG_REPORT, d0
+		bne	.check_none_report
+		bsr	read_sm1_sig
+		rts
+
+	.check_none_report:
+		; diag m1 reports this board has no sm1 (benign, not an error)
+		cmp.b	#COMM_SM1_NONE, d0
+		bne	.no_sm1_request
+		bsr	handle_sm1_none
 
 	.no_sm1_request:
 		rts
 
-; Reads the 8 sequence-tagged nibbles the z80 sends after COMM_SM1_CRC_REPORT
-; (high nibble = sequence 1..8, low nibble = data) and stores the 4 reassembled
-; crc bytes (upper:lower) at sm1_crc_actual.
+; read 8 seq-tagged nibbles -> sm1_crc_actual
 read_sm1_crc:
 		movem.l	d0-d4/a0, -(a7)
 		move.b	#COMM_SM1_CRC_ACK, REG_SOUND	; ready, send it
@@ -275,8 +302,50 @@ read_sm1_crc:
 		addi.b	#$10, d1			; advance to next sequence
 		rts
 
-; print the actual sm1 crc the z80 reported (sm1_crc_actual = upper:lower) on
-; the error screen, so it can be read off and copied into the expected value.
+; read SM1_SIG_LEN bytes -> sm1_sig_actual (seq wraps $10..$f0)
+read_sm1_sig:
+		movem.l	d0-d4/a0, -(a7)
+		move.b	#COMM_SM1_SIG_ACK, REG_SOUND	; ready, send it
+		lea	sm1_sig_actual, a0
+		moveq	#$10, d1			; expected high nibble (sequence 1)
+		moveq	#SM1_SIG_LEN-1, d2
+	.next_byte:
+		bsr	.read_nibble
+		lsl.b	#4, d0
+		move.b	d0, d3
+		bsr	.read_nibble
+		or.b	d0, d3
+		move.b	d3, (a0)+
+		dbra	d2, .next_byte
+		movem.l	(a7)+, d0-d4/a0
+		rts
+
+	.read_nibble:
+		WATCHDOG
+		move.b	REG_SOUND, d0
+		move.b	d0, d4
+		andi.b	#$f0, d4
+		cmp.b	d1, d4
+		bne	.read_nibble
+		move.b	d0, REG_SOUND
+		andi.b	#$0f, d0
+		addi.b	#$10, d1			; next sequence, wrapping past $f0 to $10
+		bne	.seq_ok
+		moveq	#$10, d1
+	.seq_ok:
+		rts
+
+; m1 found no sm1 (benign): flag, show, ack
+handle_sm1_none:
+		bset.b	#Z80_TEST_FLAG_SM1_NONE, z80_test_flags
+		lea	XY_STR_Z80_SM1_NONE, a0
+		RSUB	print_xy_string_struct
+		move.b	#COMM_SM1_NONE_ACK, REG_SOUND
+		move.b	#COMM_SM1_NONE, d0
+		bsr	z80_wait_clear
+		rts
+
+; show reported sm1 crc on the error screen
 print_sm1_crc_actual:
 		movem.l	d0-d3/a0/a1, -(a7)
 		lea	XY_STR_SM1_CRC_ACTUAL, a0
@@ -291,6 +360,25 @@ print_sm1_crc_actual:
 		RSUB	print_hex_byte
 		movem.l	(a7)+, d0/d1/d3/a1
 		addq.b	#2, d0
+		dbra	d3, .loop
+		movem.l	(a7)+, d0-d3/a0/a1
+		rts
+
+; show reported raw sm1 bytes on the error screen
+print_sm1_sig_actual:
+		movem.l	d0-d3/a0/a1, -(a7)
+		lea	XY_STR_SM1_SIG_ACTUAL, a0
+		RSUB	print_xy_string_struct
+		lea	sm1_sig_actual, a1
+		moveq	#13, d0			; x, just after the label
+		moveq	#18, d1			; y, below the crc readout
+		moveq	#SM1_SIG_LEN-1, d3
+	.loop:
+		move.b	(a1)+, d2
+		movem.l	d0/d1/d3/a1, -(a7)
+		RSUB	print_hex_byte
+		movem.l	(a7)+, d0/d1/d3/a1
+		addq.b	#3, d0			; 2 hex chars + a gap
 		dbra	d3, .loop
 		movem.l	(a7)+, d0-d3/a0/a1
 		rts
@@ -456,4 +544,9 @@ XY_STR_Z80_M1_ENABLED:		XY_STRING 34,  4, "[M1]"
 XY_STR_Z80_SLOT_SWITCH_NUM:	XY_STRING 29,  4, "[SS ]"
 XY_STR_Z80_SM1_TESTS:		XY_STRING 24,  4, "[SM1]"
 XY_STR_SM1_CRC_ACTUAL:		XY_STRING  4, 16, "SM1 CRC READ:"
+XY_STR_SM1_SIG_ACTUAL:		XY_STRING  4, 18, "SM1 RAW:"
 XY_STR_Z80_SND_REG:		XY_STRING  4, 10, "SND REG: "
+	ifd ROM
+XY_STR_Z80_SM1_AUTOSKIP:	XY_STRING  4,  7, "SM1 AUTO-SKIPPED - BOARD HAS NO SM1"
+	endif
+XY_STR_Z80_SM1_NONE:		XY_STRING  4, 12, "SM1: NONE - BOARD HAS NO SM1"

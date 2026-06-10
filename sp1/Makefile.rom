@@ -17,6 +17,8 @@
 
 OBJS = obj-rom/backup_ram.o \
        obj-rom/bios_crc32.o \
+       obj-rom/bios_info.o \
+       obj-rom/flashcart.o \
        obj-rom/bios_mirror.o \
        obj-rom/calendar.o \
        obj-rom/rom_header.o \

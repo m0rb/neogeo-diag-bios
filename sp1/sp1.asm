@@ -24,7 +24,7 @@ _start:
 		WATCHDOG
 	ifd ROM
 		; When running from a cartridge slot (instead of the bios socket)
-		; the host bios has been running up to this point.  Make sure the
+		; the bios has been running up to this point.  Make sure the
 		; cartridge vector table is mapped and that the fix layer reads
 		; from the on-board sfix font, which is what all of our text
 		; printing assumes (tile index == ascii code).  Also undo any
@@ -36,7 +36,7 @@ _start:
 		bset.b	#7, $0010fd80			; BIOS_SYSTEM_MODE: the diag is now
 							; running, so our cart_vblank/cart_timer
 							; wrappers use the diag's handlers, not
-							; the host bios' ones
+							; the bios' ones
 	endif
 		clr.b	REG_POUTPUT
 		clr.b	p1_input
@@ -73,6 +73,18 @@ _start:
 		moveq	#1, d0
 	.cart_c_not_held:
 		move.w	d0, PALETTE_RAM_START+$1002	; C-held latch
+
+		; Latch the bios' runtime AES/MVS mode ($10fd82) before the
+		; work ram tests wipe it.  bit7 == 0 means AES - and crucially this
+		; is the flag unibios drives for its *AES mode*, so latching it lets
+		; us auto-skip the SM1 test when a user runs unibios in AES mode (no
+		; SM1 there) even though the hardware id still reads MVS.
+		moveq	#0, d0
+		btst	#7, HOST_BIOS_RUNTIME_FLAG
+		bne	.cart_runtime_mvs
+		moveq	#1, d0				; AES mode (real AES or unibios-AES)
+	.cart_runtime_mvs:
+		move.w	d0, RUNTIME_AES_LATCH
 	endif
 
 		moveq	#-$10, d0
@@ -144,10 +156,23 @@ automatic_tests:
 	endif
 
 		btst	#6, REG_P1CNT			; if P1 "C", add flag to bypass SM1 OE/CRC tests
-		bne	.do_slot_switch
+		bne	.auto_detect_sm1
 
 	.skip_sm1_tests:
 		bset.b	#Z80_TEST_FLAG_SKIP_SM1_TESTS, z80_test_flags
+		bra	.do_slot_switch
+
+	.auto_detect_sm1:
+	ifd ROM
+		; auto-skip SM1 on no-sm1 boards (A at boot forces it)
+		btst	#4, REG_P1CNT			; A held -> force SM1
+		beq	.do_slot_switch
+		bsr	board_no_sm1
+		tst.b	d0
+		beq	.do_slot_switch
+		bset.b	#Z80_TEST_FLAG_SKIP_SM1_TESTS, z80_test_flags
+		bset.b	#Z80_TEST_FLAG_SM1_AUTO_SKIPPED, z80_test_flags
+	endif
 
 	.do_slot_switch:
 
@@ -174,6 +199,8 @@ automatic_tests:
 		clr.w	PALETTE_BACKDROP
 	endif
 
+	.after_z80:
+
 		bsr	automatic_function_tests
 		lea	XY_STR_ALL_TESTS_PASSED, a0
 		RSUB	print_xy_string_struct_clear
@@ -183,7 +210,7 @@ automatic_tests:
 
 		tst.b	z80_test_flags
 
-		bne	.loop_user_input
+		bne	.check_autoskip_note
 
 		lea	XY_STR_Z80_TESTS_SKIPPED, a0
 		RSUB	print_xy_string_struct_clear
@@ -194,9 +221,39 @@ automatic_tests:
 		lea	XY_STR_Z80_RESET_WITH_CART, a0
 		RSUB	print_xy_string_struct_clear
 
+	.check_autoskip_note:
+	ifd ROM
+		btst	#Z80_TEST_FLAG_SM1_AUTO_SKIPPED, z80_test_flags
+		beq	.check_sm1_none_note
+		lea	XY_STR_SM1_AUTOSKIP_1, a0
+		RSUB	print_xy_string_struct_clear
+		lea	XY_STR_SM1_AUTOSKIP_2, a0
+		RSUB	print_xy_string_struct_clear
+		bra	.loop_user_input
+	endif
+
+	.check_sm1_none_note:
+		; the m1 found no sm1 in-test (any board, any bios) - benign
+		btst	#Z80_TEST_FLAG_SM1_NONE, z80_test_flags
+		beq	.loop_user_input
+		lea	XY_STR_SM1_NONE_RESULT, a0
+		RSUB	print_xy_string_struct_clear
+
 	.loop_user_input:
 		WATCHDOG
 		bsr	check_reset_request
+
+	ifd ROM
+		; offer a live SM1 retest (B only) when SM1 was auto-skipped, for a
+		; suspected false positive - re-runs the slot switch + z80 tests
+		btst	#Z80_TEST_FLAG_SM1_AUTO_SKIPPED, z80_test_flags
+		beq	.no_sm1_retest
+		move.b	REG_P1CNT, d0
+		and.b	#$f0, d0		; A,B,C,D (active low)
+		cmp.b	#$d0, d0		; only B held (A/C/D up)
+		beq	.retest_sm1
+	.no_sm1_retest:
+	endif
 
 		moveq	#-$10, d0
 		and.b	REG_P1CNT, d0		; ABCD pressed?
@@ -207,6 +264,33 @@ automatic_tests:
 		clr.b	main_menu_cursor
 		SSA3	fix_clear
 		bra	manual_tests
+
+	ifd ROM
+	.retest_sm1:
+		; user pressed B on a board where SM1 was auto-skipped: force the
+		; SM1 test and re-run the z80 tests live (no reboot needed)
+		bclr.b	#Z80_TEST_FLAG_SKIP_SM1_TESTS, z80_test_flags
+		bclr.b	#Z80_TEST_FLAG_SM1_AUTO_SKIPPED, z80_test_flags
+		SSA3	fix_clear
+		move.b	d0, REG_SWPROM
+		move.b	d0, REG_BRDFIX
+		move.b	d0, REG_NOSHADOW
+		move.w	#$4000, REG_LSPCMODE
+		move.l	#$7fff0000, PALETTE_RAM_START+$2
+		clr.w	PALETTE_BACKDROP
+		bsr	z80_slot_switch
+		lea	XY_STR_Z80_WAITING, a0
+		RSUB	print_xy_string_struct_clear
+		bsr	auto_z80_tests
+		move.b	d0, REG_SWPROM
+		move.b	d0, REG_BRDFIX
+		move.b	d0, REG_NOSHADOW
+		move.w	#$4000, REG_LSPCMODE
+		move.l	#$7fff0000, PALETTE_RAM_START+$2
+		clr.w	PALETTE_BACKDROP
+		SSA3	fix_clear
+		bra	.after_z80
+	endif
 
 ; runs automatic tests that are psub based
 automatic_psub_tests_dsub:
@@ -483,6 +567,10 @@ MAIN_MENU_ITEMS_START:
 	MAIN_MENU_ITEM STR_CPU_PAL_ADDR_TEST, manual_cpu_pal_addr_test, 0
 	MAIN_MENU_ITEM STR_MEMCARD_TESTS, manual_memcard_tests, 0
 	MAIN_MENU_ITEM STR_P_ROM_BUS_TESTS, manual_p_rom_bus_tests, 0
+	ifd ROM
+	MAIN_MENU_ITEM STR_BIOS_INFO, manual_bios_info_tests, 0
+	MAIN_MENU_ITEM STR_RETURN_TO_FLASHCART, manual_return_to_flashcart, 0
+	endif
 MAIN_MENU_ITEMS_END:
 
 
@@ -526,6 +614,12 @@ XY_STR_Z80_WAITING:		XY_STRING  4,  5, "WAITING FOR Z80 TO FINISH TESTS..."
 XY_STR_Z80_TESTS_SKIPPED:	XY_STRING  4, 23, "NOTE: Z80 TESTING WAS SKIPPED. TO"
 XY_STR_Z80_HOLD_D_AND_SOFT:	XY_STRING  4, 24, "TEST Z80, HOLD BUTTON D AND SOFT"
 XY_STR_Z80_RESET_WITH_CART:	XY_STRING  4, 25, "RESET WITH TEST CART INSERTED."
+
+	ifd ROM
+XY_STR_SM1_AUTOSKIP_1:		XY_STRING  4, 23, "SM1 AUTO-SKIPPED (BOARD HAS NO SM1)"
+XY_STR_SM1_AUTOSKIP_2:		XY_STRING  4, 24, "PRESS B TO RETEST, A+D@BOOT TO FORCE"
+	endif
+XY_STR_SM1_NONE_RESULT:		XY_STRING  4, 23, "SM1 NOT PRESENT ON THIS BOARD (OK)"
 
 STR_TESTING_BIOS_MIRROR:	STRING "TESTING BIOS MIRRORING..."
 STR_TESTING_BIOS_CRC32:		STRING "TESTING BIOS CRC32..."
