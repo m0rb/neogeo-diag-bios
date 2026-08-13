@@ -9,6 +9,12 @@
 
 	section text
 
+; bounce buffer (free work ram, above the fixmap backup + screen scratch)
+BRAM_KEEP_BUF	equ $104000
+
+; The automatic tests save/restore backup ram contents so the mvs bios'
+; bookkeeping table survives booting the diag.  Only failures leave it
+; partially clobbered (contents were suspect anyway).
 auto_backup_ram_tests:
 		tst.b	REG_STATUS_B			; do test if MVS
 		bmi	.do_tests
@@ -17,22 +23,85 @@ auto_backup_ram_tests:
 
 	.do_tests:
 		move.b	d0, REG_SRAMUNLOCK		; unlock
-		RSUB	backup_ram_oe_tests
+		RSUB	backup_ram_oe_tests		; read-only
 		tst.b	d0
-		bne	.test_failed
+		bne	.done
 
+		move.w	BACKUP_RAM_START, BRAM_KEEP_BUF	; we test clobbers first word only
 		RSUB	backup_ram_we_tests
 		tst.b	d0
-		bne	.test_failed
+		bne	.done
+		move.w	BRAM_KEEP_BUF, BACKUP_RAM_START
 
-		RSUB	backup_ram_data_tests
+		moveq	#0, d5				; data tests, 16k chunks
+	.loop_data_chunk:
+		WATCHDOG
+		bsr	.chunk_addr
+		lea	BRAM_KEEP_BUF, a1
+		move.w	#$4000, d0
+		bsr	copy_memory
+		bsr	.chunk_addr
+		move.w	#$2000, d0			; words
+		RSUB	check_ram_data
 		tst.b	d0
-		bne	.test_failed
+		bne	.data_failed
+		bsr	.chunk_addr
+		movea.l	a0, a1
+		lea	BRAM_KEEP_BUF, a0
+		move.w	#$4000, d0
+		bsr	copy_memory
+		addq.w	#1, d5
+		cmp.w	#4, d5
+		bne	.loop_data_chunk
+
+		; address tests clobber first $200 bytes + one word every $200
+		lea	BACKUP_RAM_START, a0
+		lea	BRAM_KEEP_BUF, a1
+		move.w	#$200, d0
+		bsr	copy_memory
+		lea	BACKUP_RAM_START, a0
+		lea	BRAM_KEEP_BUF+$200, a1
+		move.w	#$80-1, d1
+	.loop_save_sparse:
+		WATCHDOG
+		move.w	(a0), (a1)+
+		lea	($200,a0), a0
+		dbra	d1, .loop_save_sparse
 
 		RSUB	backup_ram_address_tests
+		tst.b	d0
+		bne	.done
 
-	.test_failed:
+		lea	BRAM_KEEP_BUF, a0
+		lea	BACKUP_RAM_START, a1
+		move.w	#$200, d0
+		bsr	copy_memory
+		lea	BRAM_KEEP_BUF+$200, a0
+		lea	BACKUP_RAM_START, a1
+		move.w	#$80-1, d1
+	.loop_restore_sparse:
+		WATCHDOG
+		move.w	(a0)+, (a1)
+		lea	($200,a1), a1
+		dbra	d1, .loop_restore_sparse
+		moveq	#0, d0
+
+	.done:
 		move.b	d0, REG_SRAMLOCK		; lock
+		rts
+
+	.data_failed:
+		subq.b	#1, d0
+		add.b	#EC_BRAM_DATA_LOWER, d0
+		bra	.done
+
+	.chunk_addr:					; a0 = start of chunk d5
+		moveq	#0, d0
+		move.w	d5, d0
+		swap	d0
+		lsr.l	#2, d0				; * $4000
+		lea	BACKUP_RAM_START, a0
+		adda.l	d0, a0
 		rts
 
 manual_backup_ram_tests:

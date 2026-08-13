@@ -51,8 +51,12 @@ $ make -f Makefile.rom neo       # also pack a Terraonion .neo (needs the neosd 
 $ make -f Makefile.rom validate  # romset with a forced SM1 CRC fail (see below)
 ```
 
-The romset is the bare minimum a flash cart needs: PROM, MROM, and 1KB zero-filled 
-S/V/C roms.
+The romset is the bare minimum a flash cart needs: PROM, MROM, an SROM with an
+ascii fix font, and 1KB zero-filled V/C roms.  
+**AES**: an AES has no board sfix, the fix layer always comes from the cart, 
+so a zero-filled S rom means a black screen there. The font S rom is generated 
+by `sp1/gen-fix-font.py` from a VGA 8x8 console font and checked in as
+`sp1/fix_font.s1`.
 
 ### z80 / m1 testing
 
@@ -60,13 +64,13 @@ z80 testing is opt-in via the buttons held at boot:
 
 | hold at boot | result |
 |---|---|
-| (nothing) | z80 testing skipped (clean boot) |
-| **D**     | full z80 test; the SM1 OE/CRC test runs unless the board is detected as having no SM1 |
+| (nothing) | skip z80 testing (clean boot) |
+| **D**     | full z80 test; SM1 OE/CRC test runs unless no SM1 is detected |
 | **C+D**   | z80 test, SM1 OE/CRC force-skipped |
 | **B+D**   | z80 test, SM1 OE/CRC force-skipped (skips the slot switch; for MV-1B/1C) |
-| **A+D**   | z80 test, SM1 OE/CRC **forced** even if the board is detected as having no SM1 |
+| **A+D**   | z80 test, SM1 OE/CRC **forced** even if board type has no SM1 |
 
-**No false SM1 errors on no-SM1 boards.** There are two layers:
+**No false-positive SM1 errors on no-SM1 boards.** There are two layers:
 
 1. **Boot-time auto-skip (host-bios detection):** the cart inspects the host
    bios at boot and skips the SM1 test on boards it can identify as having no
@@ -98,6 +102,20 @@ harmless on other carts. See [docs/rom.md](docs/rom.md) for the mechanism.
 
 ### Notes
 
+- **BACKUP RAM MANAGEMENT** menu item (MVS only, both builds) decodes the
+  backup ram bookkeeping table (signature, credits and the 8 game entries with
+  NGH/id/date/name), with a hex viewer of the full `$D00000-$D0FFFF` region
+  (**B** toggles views, UP/DOWN pages, LEFT/RIGHT jumps 4K). UP/DOWN in the
+  table selects an entry, **A** wipes just that entry (table slot, date,
+  soft dips, name, save block and play records) and **RIGHT** deep-copies it
+  to another slot (pick the destination with UP/DOWN, **A** commits; the copy
+  reuses the destination's block or allocates the first free one like the
+  bios does). **C** opens the init screen:
+  wipe only the bookkeeping records, or zero-fill + verify all backup ram so
+  the bios rebuilds it on the next boot. The automatic tests at boot save/restore
+  backup ram, so the bookkeeping table survives running the diag; the manual
+  BACKUP RAM TEST LOOP is still destructive. The UniBIOS settings block at
+  `$D00000-$D0000F` is only cleared by the full initialize.
 - Soft reset is **P1 START + COIN** (BIOS build uses START + SELECT).
 - See [docs/rom.md](docs/rom.md) for the boot flow, build internals and
   board-variant details.

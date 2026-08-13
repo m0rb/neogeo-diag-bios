@@ -3,6 +3,7 @@
 	include "sp1.inc"
 
 	global check_reset_request
+	global copy_memory
 	global delay_dsub
 	global error_to_credit_leds_dsub
 	global get_slot_count

@@ -27,7 +27,8 @@ This first chunk of tests are written such that they don't touch the work ram.
 At this point work ram starts getting used.
 
 * [68k <=> Z80 Communication Test](tests/comm_test.md) (if enabled)
-* Backup RAM Tests (if MVS or force enabled on AES)
+* Backup RAM Tests (if MVS or force enabled on AES; contents are
+  saved/restored so the bios bookkeeping table survives the diag)
   * [Backup RAM Output Enable Tests](tests/68k/backup_ram_oe.md)
     * Backup RAM Upper
     * Backup RAM Lower
@@ -133,6 +134,13 @@ At this point work ram starts getting used.
    * Backup RAM Address Tests
      * Address Lines a0 to a7
      * Address Lines a8 to a14
+ * Backup RAM Management (MVS only)
+   * Decoded bookkeeping table (signature, credits, game entries)
+   * Hex viewer of the full backup ram ($D00000-$D0FFFF)
+   * Wipe a single game entry (slot, date, dips, name, save block, play records)
+   * Deep-copy a game entry to another slot
+   * Wipe bookkeeping records only
+   * Initialize (zero fill + verify) backup ram
  * Palette RAM Test Loop
    * Palette RAM Data Tests
      * Palette Bank0

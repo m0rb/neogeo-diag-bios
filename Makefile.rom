@@ -23,7 +23,9 @@ rom:
 	mkdir -p $(DIST)
 	cp sp1/output/diag.p1    $(DIST)/$(ROMNAME).p1
 	cp m1/output/m1_rom.bin $(DIST)/$(ROMNAME).m1
-	for t in s1 v1 c1; do head -c 1024 /dev/zero > $(DIST)/$(ROMNAME).$$t; done
+	# ascii fix font so the diag has video output on AES (no board sfix there)
+	cp sp1/fix_font.s1       $(DIST)/$(ROMNAME).s1
+	for t in v1 c1; do head -c 1024 /dev/zero > $(DIST)/$(ROMNAME).$$t; done
 	@echo "=== romset ready: $(DIST)/ ==="
 	@ls -l $(DIST)
 
@@ -34,7 +36,8 @@ validate:
 	mkdir -p $(DIST)
 	cp sp1/output/diag.p1             $(DIST)/$(ROMNAME).p1
 	cp m1/output/m1_rom_validate.bin $(DIST)/$(ROMNAME).m1
-	for t in s1 v1 c1; do head -c 1024 /dev/zero > $(DIST)/$(ROMNAME).$$t; done
+	cp sp1/fix_font.s1                $(DIST)/$(ROMNAME).s1
+	for t in v1 c1; do head -c 1024 /dev/zero > $(DIST)/$(ROMNAME).$$t; done
 	@echo "=== VALIDATION romset (forced SM1 CRC fail) ready: $(DIST)/ ==="
 	@ls -l $(DIST)
 

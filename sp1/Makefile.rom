@@ -16,6 +16,7 @@
 #    linked image is run through dd conv=swab
 
 OBJS = obj-rom/backup_ram.o \
+       obj-rom/backup_ram_mgmt.o \
        obj-rom/bios_crc32.o \
        obj-rom/bios_info.o \
        obj-rom/flashcart.o \

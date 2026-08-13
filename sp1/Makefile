@@ -1,4 +1,5 @@
 OBJS = obj/backup_ram.o \
+       obj/backup_ram_mgmt.o \
        obj/bios_crc32.o \
        obj/bios_mirror.o \
        obj/calendar.o \
