@@ -2,8 +2,8 @@
 ---
 #### v0.19a11 (master)
 * SP1: New Feature: Backup RAM Management (table view, hex dump, copy, targeted wipes, full and partial initialize)
-* ROM: Ship an ascii fix font in NGDIAG.s1 - the diag now has video output on AES (cart fix is the only fix rom there)
 * SP1: Automatic backup ram tests now save then restore contents (prior versions wiped it out)
+* S1: Added an ascii font to NGDIAG.s1 - diag should now have video output on AES
 
 #### v0.19a10
 * SP1+M1: Updates for ROM Diagnostics Variant, bidirectional Z80 comms for M1 checksum, SM1 detection
