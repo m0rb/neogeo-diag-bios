@@ -67,43 +67,61 @@ loop_reset_check_dsub:
 		moveq	#4, d0
 		moveq	#27, d1
 		lea	STR_HOLD_SS_TO_RESET, a0
+	ifd ROM
+		tst.b	REG_STATUS_B			; AES: start+select (no coin switch)
+		bmi	.hold_str_done
+		lea	STR_HOLD_SS_TO_RESET_AES, a0
+	.hold_str_done:
+	endif
 		DSUB	print_xy_string_clear
 
 	.loop_ss_not_pressed:
 		WATCHDOG
 	ifd ROM
+		tst.b	REG_STATUS_B
+		bpl	.aes_press
 		moveq	#1, d0
 		and.b	REG_STATUS_B, d0		; P1 START
 		bne	.loop_ss_not_pressed
 		moveq	#1, d0
 		and.b	REG_STATUS_A, d0		; P1 COIN
 		bne	.loop_ss_not_pressed		; loop until P1 start+coin both held down
+		bra	.combo_pressed
+	.aes_press:
 	endif
-	ifnd ROM
 		moveq	#3, d0
 		and.b	REG_STATUS_B, d0
 		bne	.loop_ss_not_pressed		; loop until P1 start+select both held down
-	endif
+	.combo_pressed:
 
 		moveq	#4, d0
 		moveq	#27, d1
 		lea	STR_RELEASE_SS, a0
+	ifd ROM
+		tst.b	REG_STATUS_B
+		bmi	.rel_str_done
+		lea	STR_RELEASE_SS_AES, a0
+	.rel_str_done:
+	endif
 		DSUB	print_xy_string_clear
 
 	.loop_ss_pressed:
 		WATCHDOG
 	ifd ROM
+		tst.b	REG_STATUS_B
+		bpl	.aes_release
 		btst	#0, REG_STATUS_B		; wait for P1 START release
 		beq	.loop_ss_pressed
 		btst	#0, REG_STATUS_A		; and P1 COIN release
 		beq	.loop_ss_pressed
+		bra	.combo_released
+	.aes_release:
 	endif
-	ifnd ROM
 		moveq	#3, d0
 		and.b	REG_STATUS_B, d0
 		cmp.b	#3, d0
 		bne	.loop_ss_pressed		; loop until P1 start+select are released
-	endif
+	.combo_released:
 
 		reset
 		stop	#$2700
@@ -113,41 +131,53 @@ loop_reset_check_dsub:
 check_reset_request:
 		move.w	d0, -(a7)
 	ifd ROM
-		; cart build: soft reset on P1 START + COIN (handier on a cab /
-		; flash-cart setup than start+select).  START = REG_STATUS_B bit0,
-		; COIN = REG_STATUS_A bit0; both active low.
+		; cart build: soft reset on P1 START + COIN on MVS (handier on a
+		; cab than start+select), START + SELECT on AES (no coin switch).
+		; START = REG_STATUS_B bit0, COIN = REG_STATUS_A bit0; active low.
+		tst.b	REG_STATUS_B
+		bpl	.aes_check
 		moveq	#1, d0
 		and.b	REG_STATUS_B, d0		; P1 START
 		bne	.ss_not_pressed
 		moveq	#1, d0
 		and.b	REG_STATUS_A, d0		; P1 COIN
 		bne	.ss_not_pressed
+		bra	.combo_pressed
+	.aes_check:
 	endif
-	ifnd ROM
 		moveq	#3, d0
 		and.b	REG_STATUS_B, d0
 		bne	.ss_not_pressed			; P1 start+select not pressed, exit out
-	endif
+	.combo_pressed:
 
 		moveq	#4, d0
 		moveq	#27, d1
 		lea	STR_RELEASE_SS, a0
+	ifd ROM
+		tst.b	REG_STATUS_B
+		bmi	.rel_str_done
+		lea	STR_RELEASE_SS_AES, a0
+	.rel_str_done:
+	endif
 		RSUB	print_xy_string_clear
 
 	.loop_ss_pressed:
 		WATCHDOG
 	ifd ROM
+		tst.b	REG_STATUS_B
+		bpl	.aes_release
 		btst	#0, REG_STATUS_B		; wait for P1 START release
 		beq	.loop_ss_pressed
 		btst	#0, REG_STATUS_A		; and P1 COIN release
 		beq	.loop_ss_pressed
+		bra	.combo_released
+	.aes_release:
 	endif
-	ifnd ROM
 		moveq	#3, d0
 		and.b	REG_STATUS_B, d0
 		cmp.b	#3, d0
-		bne	.loop_ss_pressed		; wait for P1 start+select to be released, before reset
-	endif
+		bne	.loop_ss_pressed		; wait for release, before reset
+	.combo_released:
 
 		reset
 		stop	#$2700
@@ -396,12 +426,20 @@ print_hold_ss_to_reset:
 		moveq	#4, d0
 		moveq	#27, d1
 		lea	STR_HOLD_SS_TO_RESET, a0
+	ifd ROM
+		tst.b	REG_STATUS_B
+		bmi	.hold_str_done
+		lea	STR_HOLD_SS_TO_RESET_AES, a0
+	.hold_str_done:
+	endif
 		RSUB	print_xy_string_clear
 		rts
 
 	ifd ROM
 STR_HOLD_SS_TO_RESET:			STRING "HOLD START+COIN TO SOFT RESET"
 STR_RELEASE_SS:				STRING "RELEASE START+COIN"
+STR_HOLD_SS_TO_RESET_AES:		STRING "HOLD START+SELECT TO SOFT RESET"
+STR_RELEASE_SS_AES:			STRING "RELEASE START+SELECT"
 	endif
 	ifnd ROM
 STR_HOLD_SS_TO_RESET:			STRING "HOLD START/SELECT TO SOFT RESET"

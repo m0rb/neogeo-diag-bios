@@ -22,6 +22,10 @@ manual_return_to_flashcart:
 		lea	XY_STR_RTF_2, a0
 		RSUB	print_xy_string_struct_clear
 		lea	XY_STR_RTF_3, a0
+		tst.b	REG_STATUS_B			; AES: start+select combo
+		bmi	.mvs_reset_str
+		lea	XY_STR_RTF_3_AES, a0
+	.mvs_reset_str:
 		RSUB	print_xy_string_struct_clear
 
 	.loop:
@@ -50,3 +54,4 @@ STR_RETURN_TO_FLASHCART:	STRING "RETURN TO FLASHCART MENU"
 XY_STR_RTF_1:	XY_STRING  4,  7, "PRESS THE FLASH CART RETURN COMBO"
 XY_STR_RTF_2:	XY_STRING  4,  8, "TO RETURN TO ITS MENU."
 XY_STR_RTF_3:	XY_STRING  4, 26, "START+COIN: SOFT RESET"
+XY_STR_RTF_3_AES:	XY_STRING  4, 26, "START+SELECT: SOFT RESET"

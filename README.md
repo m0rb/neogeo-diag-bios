@@ -116,6 +116,7 @@ harmless on other carts. See [docs/rom.md](docs/rom.md) for the mechanism.
   backup ram, so the bookkeeping table survives running the diag; the manual
   BACKUP RAM TEST LOOP is still destructive. The UniBIOS settings block at
   `$D00000-$D0000F` is only cleared by the full initialize.
-- Soft reset is **P1 START + COIN** (BIOS build uses START + SELECT).
+- Soft reset on the ROM build is **P1 START + COIN** on MVS and
+  **P1 START + SELECT** on AES.
 - See [docs/rom.md](docs/rom.md) for the boot flow, build internals and
   board-variant details.
