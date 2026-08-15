@@ -6,8 +6,6 @@
 * SP1: Add START+SELECT for AES soft reset.
 * S1: Added an ascii font to NGDIAG.s1 for AES.
 
->>>>>>> cdd6e57 (v0.19a11 - add AES controller support for soft reboot)
-
 #### v0.19a10
 * SP1+M1: Updates for ROM Diagnostics Variant, bidirectional Z80 comms for M1 checksum, SM1 detection
 
