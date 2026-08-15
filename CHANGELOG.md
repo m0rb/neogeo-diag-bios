@@ -3,11 +3,8 @@
 #### v0.19a11 (master)
 * SP1: New Feature: Backup RAM Management (table view, hex dump, copy, targeted wipes, full and partial initialize)
 * SP1: Automatic backup ram tests now save then restore contents (prior versions wiped it out)
-<<<<<<< HEAD
-* S1: Added an ascii font to NGDIAG.s1 - diag should now have video output on AES
-=======
 * SP1: Add START+SELECT for AES soft reset.
-* S1: Added an ascii font to NGDIAG.s1 - diag should now have video output on AES
+* S1: Added an ascii font to NGDIAG.s1 for AES.
 
 >>>>>>> cdd6e57 (v0.19a11 - add AES controller support for soft reboot)
 
