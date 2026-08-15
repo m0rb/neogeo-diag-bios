@@ -124,6 +124,13 @@ loop_reset_check_dsub:
 	.combo_released:
 
 		reset
+		tst.b	REG_STATUS_B			; AES has no watchdog - reboot
+		bmi	.wait_watchdog			; through the bios reset vector
+		move.b	d0, REG_SWPBIOS
+		movea.l	$0, a7
+		movea.l	$4, a0
+		jmp	(a0)
+	.wait_watchdog:
 		stop	#$2700
 
 ; check if P1 is pressing start+select, if they are loop until
@@ -180,6 +187,13 @@ check_reset_request:
 	.combo_released:
 
 		reset
+		tst.b	REG_STATUS_B			; AES has no watchdog - reboot
+		bmi	.wait_watchdog			; through the bios reset vector
+		move.b	d0, REG_SWPBIOS
+		movea.l	$0, a7
+		movea.l	$4, a0
+		jmp	(a0)
+	.wait_watchdog:
 		stop	#$2700
 
 	.ss_not_pressed:
